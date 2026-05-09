@@ -4,18 +4,25 @@ import os
 import csv
 import io
 
-app = Flask(__name__)
+app = Flask(__name__, template_folder='templates')
 
-# Create data directory on C: drive if it doesn't exist
-DATA_DIR = 'C:/my_crud_app_data'
-if not os.path.exists(DATA_DIR):
-    os.makedirs(DATA_DIR)
+# --- RENDER.COM FIX ---
+# 1. Database: Put the database in the WRITABLE current directory
+# 2. Port: Use the PORT environment variable Render provides
 
-app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{DATA_DIR}/products.db'
+# Database path - use current directory (Render can write here)
+basedir = os.path.abspath(os.path.dirname(__file__))
+db_path = os.path.join(basedir, 'instance', 'products.db')
+
+# Ensure the instance directory exists
+os.makedirs(os.path.dirname(db_path), exist_ok=True)
+
+# Use the absolute path for the database URI
+app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{db_path}'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
-# Simple password protection
+# Password protection
 ADMIN_PASSWORD = "admin123"
 
 def check_auth():
@@ -30,6 +37,7 @@ class Product(db.Model):
 
 with app.app_context():
     db.create_all()
+    print("✅ Database created/connected successfully!")
 
 def get_low_stock_count():
     return Product.query.filter(Product.quantity < 5).count()
@@ -38,6 +46,7 @@ def get_low_stock_count():
 def index():
     products = Product.query.all()
     low_stock_count = get_low_stock_count()
+    print(f"📊 Loaded {len(products)} products")
     return render_template('index.html', products=products, low_stock_count=low_stock_count)
 
 @app.route('/add', methods=['POST'])
@@ -48,6 +57,7 @@ def add_product():
     new_product = Product(name=name, price=price, quantity=quantity)
     db.session.add(new_product)
     db.session.commit()
+    print(f"💾 SAVED: {name}")
     return redirect(url_for('index'))
 
 @app.route('/update/<int:id>', methods=['POST'])
@@ -62,7 +72,7 @@ def update_product(id):
 @app.route('/delete/<int:id>')
 def delete_product(id):
     if not check_auth():
-        return "Access Denied. Add ?password=admin123 to the URL", 401
+        return "Access Denied", 401
     product = Product.query.get_or_404(id)
     db.session.delete(product)
     db.session.commit()
@@ -81,8 +91,7 @@ def search():
 @app.route('/export')
 def export():
     products = Product.query.all()
-    output = []
-    output.append(['Name', 'Price (Ksh)', 'Quantity'])
+    output = [['Name', 'Price (Ksh)', 'Quantity']]
     for p in products:
         output.append([p.name, p.price, p.quantity])
     
@@ -94,5 +103,10 @@ def export():
     response.headers.set('Content-Disposition', 'attachment', filename='products_export.csv')
     return response
 
+# --- THIS IS THE CRITICAL PART FOR RENDER ---
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    # Get the port from the environment variable RENDER provides
+    # Default to 5000 for local testing, but Render expects 10000
+    port = int(os.environ.get('PORT', 5000))
+    # Bind to 0.0.0.0 to listen on all network interfaces
+    app.run(host='0.0.0.0', port=port)
