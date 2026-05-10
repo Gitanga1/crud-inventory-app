@@ -6,23 +6,26 @@ import io
 
 app = Flask(__name__, template_folder='templates')
 
-# --- RENDER.COM FIX ---
-# 1. Database: Put the database in the WRITABLE current directory
-# 2. Port: Use the PORT environment variable Render provides
+# --- SUPABASE POSTGRESQL CONNECTION ---
+DATABASE_URL = os.environ.get('DATABASE_URL', '')
 
-# Database path - use current directory (Render can write here)
-basedir = os.path.abspath(os.path.dirname(__file__))
-db_path = os.path.join(basedir, 'instance', 'products.db')
+if not DATABASE_URL:
+    # Fallback for local testing - REPLACE WITH YOUR ACTUAL CONNECTION STRING
+    DATABASE_URL = 'postgresql://postgres.pksuygxytkjqfxfazyzl:YOUR_ACTUAL_PASSWORD@aws-1-eu-central-1.pooler.supabase.com:5432/postgres'
+    print("⚠️ WARNING: Using hardcoded database URL. Set DATABASE_URL in production!")
 
-# Ensure the instance directory exists
-os.makedirs(os.path.dirname(db_path), exist_ok=True)
+if DATABASE_URL.startswith('postgres://'):
+    DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
 
-# Use the absolute path for the database URI
-app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{db_path}'
+app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    'pool_pre_ping': True,
+    'pool_recycle': 300,
+}
+
 db = SQLAlchemy(app)
 
-# Password protection
 ADMIN_PASSWORD = "admin123"
 
 def check_auth():
@@ -37,7 +40,9 @@ class Product(db.Model):
 
 with app.app_context():
     db.create_all()
-    print("✅ Database created/connected successfully!")
+    print("✅ Database connected to Supabase PostgreSQL!")
+    count = Product.query.count()
+    print(f"📊 Current product count: {count}")
 
 def get_low_stock_count():
     return Product.query.filter(Product.quantity < 5).count()
@@ -46,7 +51,7 @@ def get_low_stock_count():
 def index():
     products = Product.query.all()
     low_stock_count = get_low_stock_count()
-    print(f"📊 Loaded {len(products)} products")
+    print(f"📊 Loaded {len(products)} products from Supabase")
     return render_template('index.html', products=products, low_stock_count=low_stock_count)
 
 @app.route('/add', methods=['POST'])
@@ -57,7 +62,7 @@ def add_product():
     new_product = Product(name=name, price=price, quantity=quantity)
     db.session.add(new_product)
     db.session.commit()
-    print(f"💾 SAVED: {name}")
+    print(f"💾 SAVED to Supabase: {name}")
     return redirect(url_for('index'))
 
 @app.route('/update/<int:id>', methods=['POST'])
@@ -103,10 +108,6 @@ def export():
     response.headers.set('Content-Disposition', 'attachment', filename='products_export.csv')
     return response
 
-# --- THIS IS THE CRITICAL PART FOR RENDER ---
 if __name__ == '__main__':
-    # Get the port from the environment variable RENDER provides
-    # Default to 5000 for local testing, but Render expects 10000
     port = int(os.environ.get('PORT', 5000))
-    # Bind to 0.0.0.0 to listen on all network interfaces
     app.run(host='0.0.0.0', port=port)
